@@ -22,7 +22,6 @@ static std::regex header_re { "(" + token + ")\\s*:\\s*(.*\\S)\\s*\\r\\n", re_op
 static std::regex header_cont_re { "\\s+(.*\\S)\\s*\\r\\n", re_opt };
 
 class http_server {
-    std::vector<std::unique_ptr<pollable_fd>> _listeners;
 public:
     void listen(ipv4_addr addr) {
         listen_options lo;
@@ -84,13 +83,16 @@ public:
                 if (_req->_method != "GET") {
                     return bad(std::move(_req));
                 }
+                printf("read()...\n");
                 _read_buf.read_until(limit, '\n').then([this] (tmp_buf header) {
                     parse_header(std::move(header));
                 });
             });
         }
         void parse_header(tmp_buf header) {
+            printf("parse_header()...\n");
             if (header.size() == 2 && header[0] == '\r' && header[1] == '\n') {
+                printf("generate_response()...\n");
                 generate_response(std::move(_req));
                 read();
                 return;
@@ -117,6 +119,7 @@ public:
             respond(std::move(resp));
         }
         void respond(std::unique_ptr<response> resp) {
+            printf("respond()...\n");
             if (!_resp) {
                 _resp = std::move(resp);
                 start_response();
@@ -125,6 +128,7 @@ public:
             }
         }
         void start_response() {
+            printf("start_response()...\n");
             _resp->_headers["Content-Length"] = to_sstring(_resp->_body.size());
             _write_buf.write(_resp->_response_line.begin(), _resp->_response_line.size()).then(
                     [this] (size_t n) mutable {
@@ -147,6 +151,8 @@ public:
             });
         }
         future<size_t> write_response_headers(std::unordered_map<sstring, sstring>::iterator hi) {
+
+            printf("write_response_headers()...\n");
             promise<size_t> pr;
             auto fut = pr.get_future();
             if (hi == _resp->_headers.end()) {
@@ -154,13 +160,13 @@ public:
                 return fut;
             }
             _write_buf.write(hi->first.begin(), hi->first.size()).then(
-                    [hi, this, pr = std::move(pr)] (size_t done) mutable {
+                    [hi, this] (size_t done) mutable {
                 return _write_buf.write(": ", 2);
-            }).then([hi, this, pr = std::move(pr)] (size_t done) mutable {
+            }).then([hi, this] (size_t done) mutable {
                 return _write_buf.write(hi->second.begin(), hi->second.size());
-            }).then([hi, this, pr = std::move(pr)] (size_t done) mutable {
+            }).then([hi, this] (size_t done) mutable {
                 return _write_buf.write("\r\n", 2);
-            }).then([hi, this, pr = std::move(pr)] (size_t done) mutable {
+            }).then([hi, this] (size_t done) mutable {
                 return write_response_headers(++hi);
             }).then([this, pr = std::move(pr)] (size_t done) mutable {
                 pr.set_value(done);

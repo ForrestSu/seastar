@@ -231,7 +231,7 @@ public:
                 pr.set_value(std::move(next));
             });
         });
-        return std::move(next_fut);
+        return next_fut;
     }
 
     friend class promise<T>;
