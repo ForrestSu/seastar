@@ -45,18 +45,21 @@ private:
     friend class reactor;
 };
 
+/// 模版类声明
 template <class T>
 class promise;
 
 template <class T>
 class future;
 
+/// 定义task类接口
 class task {
 public:
     virtual ~task() {}
     virtual void run() = 0;
 };
 
+/// 定义一个task子类 - lambda_task
 template <typename Func>
 class lambda_task : public task {
     Func _func;
@@ -66,6 +69,7 @@ public:
     virtual void run() { _func(); }
 };
 
+/// 定义两个模版函数: 用于构造lambda_task实例(一个copy构造,一个move构造)
 template <typename Func>
 std::unique_ptr<task>
 make_task(const Func& func) {
@@ -78,7 +82,7 @@ make_task(Func&& func) {
     return std::unique_ptr<task>(new lambda_task<Func>(std::move(func)));
 }
 
-
+/// future/promise 模版类的实现
 template <typename T>
 struct future_state {
     promise<T>* _promise = nullptr;
@@ -152,7 +156,9 @@ struct future_state {
     template <typename Func>
     void schedule(Func&& func) {
         _task = make_task(std::forward<Func>(func));
+        printf("\033[33m 创建好一个 task = %p, 暂时存放在future的task成员上!\033[0m\n", _task.get());
         if (available()) {
+            printf("当前 task 直接放入 pending 队列!\n");
             make_ready();
         }
     }
@@ -195,6 +201,7 @@ public:
     future& operator=(future&& x);
     void operator=(const future&) = delete;
     ~future() {
+        printf("~future(), state = %p...\n", _state);
         if (_state) {
             _state->_future = nullptr;
             if (!_state->has_promise()) {
@@ -213,7 +220,9 @@ public:
     void then(Func&& func,
             std::enable_if_t<std::is_same<std::result_of_t<Func(T&&)>, void>::value, void*> = nullptr) {
         auto state = _state;
+        puts("future->then()...");
         state->schedule([fut = std::move(*this), func = std::forward<Func>(func)] () mutable {
+            puts("execute task...");
             func(fut.get());
         });
     }
@@ -281,7 +290,10 @@ public:
 
     void run();
 
-    void add_task(std::unique_ptr<task>&& t) { _pending_tasks.push_back(std::move(t)); }
+    void add_task(std::unique_ptr<task>&& t) {
+        printf("\033[32m 将 task = %p  放入pending 队列()!\033[0m\n", t.get());
+        _pending_tasks.push_back(std::move(t));
+    }
 private:
     void write_all_part(pollable_fd& fd, const void* buffer, size_t size,
             promise<size_t> result, size_t completed);
@@ -294,10 +306,14 @@ extern reactor the_reactor;
 class pollable_fd {
 public:
     ~pollable_fd() { the_reactor.forget(*this); ::close(fd); }
-    future<size_t> read_some(char* buffer, size_t size) { return the_reactor.read_some(*this, buffer, size); }
+    future<size_t> read_some(char* buffer, size_t size) {
+        return the_reactor.read_some(*this, buffer, size);
+    }
     future<size_t> read_some(uint8_t* buffer, size_t size) { return the_reactor.read_some(*this, buffer, size); }
     future<size_t> read_some(const std::vector<iovec>& iov) { return the_reactor.read_some(*this, iov); }
-    future<size_t> write_all(const char* buffer, size_t size) { return the_reactor.write_all(*this, buffer, size); }
+    future<size_t> write_all(const char* buffer, size_t size) {
+        return the_reactor.write_all(*this, buffer, size);
+    }
     future<size_t> write_all(const uint8_t* buffer, size_t size) { return the_reactor.write_all(*this, buffer, size); }
     future<accept_result> accept() { return the_reactor.accept(*this); }
 protected:
@@ -416,6 +432,7 @@ private:
 inline
 future<accept_result>
 reactor::accept(pollable_fd& listenfd) {
+    puts("reactor::accept...");
     promise<accept_result> pr;
     future<accept_result> fut = pr.get_future();
     epoll_add_in(listenfd, make_task([this, pr = std::move(pr), lfd = listenfd.fd] () mutable {
@@ -425,12 +442,14 @@ reactor::accept(pollable_fd& listenfd) {
         assert(fd != -1);
         pr.set_value(accept_result{std::unique_ptr<pollable_fd>(new pollable_fd(fd)), sa});
     }));
+    puts("reactor::accept(), return future...");
     return fut;
 }
 
 inline
 future<size_t>
 reactor::read_some(pollable_fd& fd, void* buffer, size_t len) {
+    puts("read_some()...");
     promise<size_t> pr;
     auto fut = pr.get_future();
     epoll_add_in(fd, make_task([pr = std::move(pr), rfd = fd.fd, buffer, len] () mutable {
@@ -477,20 +496,24 @@ reactor::write_all_part(pollable_fd& fd, const void* buffer, size_t len,
     if (completed == len) {
         result.set_value(completed);
     } else {
+        printf("write_some() 返回一个future, 并为future 绑定then...\n");
         write_some(fd, static_cast<const char*>(buffer) + completed, len - completed).then(
                 [&fd, buffer, len, result = std::move(result), completed, this] (size_t part) mutable {
             write_all_part(fd, buffer, len, std::move(result), completed + part);
         });
+        printf("已为 poll_out 绑定一个 then task.\n");
     }
 }
 
 inline
 future<size_t>
 reactor::write_all(pollable_fd& fd, const void* buffer, size_t len) {
+    printf("write_all() %ld\n", len);
     assert(len);
     promise<size_t> pr;
     auto fut = pr.get_future();
     write_all_part(fd, buffer, len, std::move(pr), 0);
+    printf("返回一个future\n");
     return fut;
 }
 
@@ -637,6 +660,7 @@ output_stream_buffer<CharType>::flush() {
 
 template <typename T>
 void future_state<T>::make_ready() {
+    printf("call make_ready()...\n");
     if (_task) {
         the_reactor.add_task(std::move(_task));
     }
