@@ -36,6 +36,8 @@ int main(int ac, char** av) {
                 });
             });
         }
+        printf("current get_queue_size = %ld\n",ft->par.get_queue_size());
+
         ft->sem.wait(max).then([ft] {
             std::cout << "done\n";
             delete ft;

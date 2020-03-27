@@ -321,6 +321,9 @@ public:
             _wait_list.pop_front();
         }
     }
+    size_t get_queue_size(){
+        return _wait_list.size();
+    }
 };
 
 class pollable_fd_state {
