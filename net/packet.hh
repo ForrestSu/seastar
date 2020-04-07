@@ -89,7 +89,7 @@ class packet final {
             n->_headroom = old->_headroom;
             std::copy(old->_frags, old->_frags + old->_nr_frags, n->_frags);
             old->copy_internal_fragment_to(n.get());
-            return std::move(n);
+            return n;
         }
         void* operator new(size_t size, size_t nr_frags = default_nr_frags) {
             assert(nr_frags == uint16_t(nr_frags));

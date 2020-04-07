@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/eventfd.h>
+#include <sys/syscall.h>
+#define get_thread_id() syscall(SYS_gettid)
 
 timespec to_timespec(clock_type::time_point t) {
     using ns = std::chrono::nanoseconds;
@@ -266,14 +268,20 @@ void reactor::run() {
         receive_signal(SIGINT).then([this] {
             auto sem = new semaphore(0);
             for (unsigned i = 1; i < smp::count; i++) {
+                //给其他 core 发送任务
                 smp::submit_to<>(i, []() {
                     engine._stopped = true;
+                    printf("stop => thread id = %ld\n", get_thread_id());
                 }).then([sem, i]() {
+                    // 条件1：这段代码必须在core0上运行
+                    printf("then: thread id = %ld\n", get_thread_id());
                     sem->signal();
                 });
             }
+            //必须满足条件1，下面这个task才会在core-0上运行
             sem->wait(smp::count - 1).then([sem, this](){
                 _stopped = true;
+                printf("last: thread id = %ld\n", get_thread_id());
                 delete sem;
             });
         });
@@ -293,8 +301,12 @@ void reactor::run() {
         if (_stopped) {
             if (_id == 0) {
                 smp::join_all();
+                printf("all sub-thread is exit....\n");
+
+            }else {
+                printf("thread_id %ld exit\n", get_thread_id());
+                break;
             }
-            break;
         }
         std::array<epoll_event, 128> eevt;
         int nr = ::epoll_wait(_epollfd.get(), eevt.data(), eevt.size(), -1);
@@ -344,6 +356,8 @@ inter_thread_work_queue::inter_thread_work_queue()
     , _completed(queue_length)
     , _start_eventfd(0)
     , _complete_eventfd(0) {
+
+    printf("when complete()  thread id = %ld\n", get_thread_id());
     complete();
 }
 
