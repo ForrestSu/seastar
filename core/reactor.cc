@@ -8,8 +8,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/eventfd.h>
-#include <sys/syscall.h>
-#define get_thread_id() syscall(SYS_gettid)
 
 timespec to_timespec(clock_type::time_point t) {
     using ns = std::chrono::nanoseconds;
@@ -356,9 +354,6 @@ inter_thread_work_queue::inter_thread_work_queue()
     , _completed(queue_length)
     , _start_eventfd(0)
     , _complete_eventfd(0) {
-
-    printf("when complete()  thread id = %ld\n", get_thread_id());
-    complete();
 }
 
 void inter_thread_work_queue::submit_item(inter_thread_work_queue::work_item* item) {
@@ -369,6 +364,7 @@ void inter_thread_work_queue::submit_item(inter_thread_work_queue::work_item* it
 }
 
 void inter_thread_work_queue::complete() {
+    printf("complete() thread id = %ld\n", get_thread_id());
     _complete_eventfd.wait().then([this] (size_t count) {
         auto nr = _completed.consume_all([this] (work_item* wi) {
             wi->complete();
@@ -583,6 +579,14 @@ void smp::listen_all(inter_thread_work_queue* qs)
     }
 }
 
+void smp::start_all_queues()
+{
+    for (unsigned i = 0; i < smp::count; i++){
+        _qs[i][engine._id].start();
+    }
+    listen_all(_qs[engine._id]);
+}
+
 void smp::configure(boost::program_options::variables_map configuration)
 {
     smp::count = 1;
@@ -605,12 +609,12 @@ void smp::configure(boost::program_options::variables_map configuration)
                 engine._id = i;
                 engine.configure(configuration);
                 engine.when_started().then([i] {
-                    listen_all(_qs[i]);
+                    start_all_queues();
                 });
                 engine.run();
             }, i);
         }
-        listen_all(_qs[0]);
+        start_all_queues();
     }
 }
 
